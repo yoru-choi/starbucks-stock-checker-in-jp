@@ -59,12 +59,13 @@ jobs:
             page.goto(PAGE_URL, wait_until="networkidle", timeout=60000)
             print("  [2/3] JS 실행 완료, DOM 확인 중...")
 
-            # data-jan이 일치하는 form 내 outofstock 버튼 선택
-            outofstock_btn = page.locator(
+            # data-jan이 일치하는 form 내 outofstock 버튼 선택 (첫 번째만)
+            outofstock_locator = page.locator(
               f'form.js-cartform[data-jan="{jan_code}"] .js-cartform-outofstock'
             )
+            outofstock_btn = outofstock_locator.first
 
-            if outofstock_btn.count() == 0:
+            if outofstock_locator.count() == 0:
               status = "not_found"
               print(f"  결과 : ⚠️  JAN 코드 {jan_code} 를 페이지에서 찾을 수 없음")
             else:
