@@ -25,8 +25,8 @@ jobs:
       # ── 1. Playwright 설치 ───────────────────────────────────────────────────
       - name: Install Playwright
         run: |
-          pip install playwright --quiet
-          playwright install chromium --with-deps --quiet
+          pip install playwright -q
+          playwright install chromium --with-deps
 
       # ── 2. 재고 확인 (Playwright 헤드리스 브라우저, JS 완전 실행) ────────────
       - name: Check stock via Playwright
