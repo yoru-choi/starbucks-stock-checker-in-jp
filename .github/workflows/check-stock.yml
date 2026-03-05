@@ -8,13 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       jan_code:
-        description: "상품 JAN 코드 (기본값 사용 시 비워두세요)"
+        description: "상품 JAN 코드 (기본값 사용 시 비워두세요 / 테스트용: 4524785531086)"
         required: false
         default: ""
       force_notify:
         description: "이메일 테스트용 강제 알림 (true 입력 시 재고 여부 무관하게 이메일 발송)"
         required: false
-        default: "true"
+        default: "false"
 
 jobs:
   check-stock:
@@ -64,7 +64,9 @@ jobs:
           echo "  최종 도달 URL    : ${FINAL_URL}"
           echo "  최종 HTTP 상태   : ${HTTP_STATUS}"
 
-          # error_code=110 이 최종 URL에 포함되어 있으면 품절
+          # 동작 원리:
+          #   - 품절: star_cart?error_code=110 으로 직접 리다이렉트 (로그인 불필요)
+          #   - 재고 있음: login.starbucks.co.jp/login 에서 멈춤 (로그인 필요 = 재고 있다는 의미)
           if echo "${FINAL_URL}" | grep --quiet "error_code=110"; then
             echo ""
             echo "  결과 : ❌ 품절 (error_code=110 감지됨)"
@@ -72,7 +74,7 @@ jobs:
             echo "final_url=${FINAL_URL}"    >> "$GITHUB_OUTPUT"
           else
             echo ""
-            echo "  결과 : ✅ 재고 있음 (error_code=110 미감지)"
+            echo "  결과 : ✅ 재고 있음 (error_code=110 미감지 → 로그인 페이지로 유도됨)"
             echo "stock_status=in_stock"  >> "$GITHUB_OUTPUT"
             echo "final_url=${FINAL_URL}" >> "$GITHUB_OUTPUT"
           fi
@@ -98,7 +100,7 @@ jobs:
             스타벅스 재팬 한정 컵 상품이 재입고되었을 가능성이 감지되었습니다.
 
             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              상품 JAN 코드 : ${{ vars.JAN_CODE || '4524785613492' }}
+              상품 JAN 코드 : ${{ inputs.jan_code || vars.JAN_CODE || '4524785613492' }}
               감지 시각      : ${{ github.event.repository.updated_at }}
               최종 도달 URL  : ${{ steps.stock.outputs.final_url }}
             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
