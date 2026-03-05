@@ -2,17 +2,16 @@ name: Starbucks Stock Checker
 
 on:
   schedule:
-    # 4시간마다 실행 (UTC 기준: 0, 4, 8, 12, 16, 20시)
-    # 한국 기준: 9, 13, 17, 21, 01, 05시
+    # Runs every 4 hours (UTC: 0, 4, 8, 12, 16, 20 / JST: 9, 13, 17, 21, 1, 5)
     - cron: "0 */4 * * *"
   workflow_dispatch:
     inputs:
       jan_code:
-        description: "상품 JAN 코드 (기본값 사용 시 비워두세요 / 테스트용: 4524785531086)"
+        description: "Product JAN code (leave blank to use default; test item with stock: 4524785531086)"
         required: false
         default: ""
       force_notify:
-        description: "이메일 테스트용 강제 알림 (true 입력 시 재고 여부 무관하게 이메일 발송)"
+        description: "Force email for testing (set true to send email regardless of stock status)"
         required: false
         default: "false"
 
@@ -22,13 +21,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Playwright 설치 ───────────────────────────────────────────────────
+      # ── 1. Install Playwright ──────────────────────────────────────────────────
       - name: Install Playwright
         run: |
           pip install playwright -q
           playwright install chromium --with-deps
 
-      # ── 2. 재고 확인 (Playwright 헤드리스 브라우저, JS 완전 실행) ────────────
+      # ── 2. Check stock (Playwright headless browser, full JS execution) ────────
       - name: Check stock via Playwright
         id: stock
         env:
@@ -45,7 +44,7 @@ jobs:
 
           print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
           print("  Starbucks Stock Checker (Playwright)")
-          print(f"  JAN 코드 : {jan_code}")
+          print(f"  JAN Code : {jan_code}")
           print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
           with sync_playwright() as p:
@@ -55,11 +54,11 @@ jobs:
               extra_http_headers={"Accept-Language": "ja-JP,ja;q=0.9"},
             )
 
-            print("  [1/3] 페이지 로드 중...")
+            print("  [1/3] Loading page...")
             page.goto(PAGE_URL, wait_until="networkidle", timeout=60000)
-            print("  [2/3] JS 실행 완료, DOM 확인 중...")
+            print("  [2/3] JS executed, inspecting DOM...")
 
-            # data-jan이 일치하는 form 내 outofstock 버튼 선택 (첫 번째만)
+            # Select the outofstock button inside the form matching data-jan (first match only)
             outofstock_locator = page.locator(
               f'form.js-cartform[data-jan="{jan_code}"] .js-cartform-outofstock'
             )
@@ -67,16 +66,16 @@ jobs:
 
             if outofstock_locator.count() == 0:
               status = "not_found"
-              print(f"  결과 : ⚠️  JAN 코드 {jan_code} 를 페이지에서 찾을 수 없음")
+              print(f"  Result : ⚠️  JAN code {jan_code} not found on the page")
             else:
               classes = outofstock_btn.get_attribute("class") or ""
-              print(f"  outofstock 버튼 클래스: {classes}")
+              print(f"  outofstock button classes: {classes}")
               if "hide" in classes.split():
                 status = "in_stock"
-                print("  결과 : ✅ 재고 있음 (outofstock 버튼 숨김 확인)")
+                print("  Result : ✅ In stock (outofstock button is hidden)")
               else:
                 status = "out_of_stock"
-                print("  결과 : ❌ 품절 (outofstock 버튼 표시 중)")
+                print("  Result : ❌ Out of stock (outofstock button is visible)")
 
             browser.close()
 
@@ -87,7 +86,7 @@ jobs:
             f.write(f"final_url={PAGE_URL}\n")
           PYEOF
 
-      # ── 3. 재고 있을 때만 이메일 발송 ────────────────────────────────────────
+      # ── 3. Send email notification (only when in stock or force_notify is true) ─
       - name: Send email notification
         if: steps.stock.outputs.stock_status == 'in_stock' || inputs.force_notify == 'true'
         uses: dawidd6/action-send-mail@v3
@@ -99,26 +98,26 @@ jobs:
           password: ${{ secrets.GMAIL_APP_PASSWORD }}
           to: ${{ secrets.NOTIFY_EMAIL }}
           from: "Starbucks Stock Bot <${{ secrets.GMAIL_USER }}>"
-          subject: "${{ inputs.force_notify == 'true' && '🧪 [테스트 메일] 스타벅스 재고 알림 테스트' || '🎉 [재입고 알림] 스타벅스 JPN 한정 컵 구매 가능!' }}"
+          subject: "${{ inputs.force_notify == 'true' && '🧪 [TEST] Starbucks Stock Checker - test notification' || '🎉 [RESTOCK ALERT] Starbucks Japan limited item is available!' }}"
           body: |
-            ${{ inputs.force_notify == 'true' && '⚠️ 이 메일은 테스트 발송입니다. 실제 재고와 무관합니다.' || '안녕하세요!' }}
+            ${{ inputs.force_notify == 'true' && '⚠️ This is a test notification. It does not reflect actual stock status.' || 'Hello!' }}
 
-            스타벅스 재팬 한정 컵 상품이 재입고되었을 가능성이 감지되었습니다.
+            A potential restock has been detected for a Starbucks Japan limited item.
 
             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              상품 JAN 코드 : ${{ inputs.jan_code || vars.JAN_CODE || '4524785613492' }}
-              감지 시각      : ${{ github.event.repository.updated_at }}
-              최종 도달 URL  : ${{ steps.stock.outputs.final_url }}
+              Product JAN Code : ${{ inputs.jan_code || vars.JAN_CODE || '4524785613492' }}
+              Detected At      : ${{ github.event.repository.updated_at }}
+              Page URL         : ${{ steps.stock.outputs.final_url }}
             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-            지금 바로 확인해 보세요:
+            Check availability now:
             https://cart.starbucks.co.jp/api/star-login?jan_code=${{ vars.JAN_CODE || '4524785613492' }}
 
             ─────────────────────────────────
-            이 메일은 GitHub Actions Bot이 자동 발송했습니다.
-            (4시간마다 재고를 자동 확인합니다)
+            This email was sent automatically by GitHub Actions Bot.
+            (Stock is checked every 4 hours)
 
-      # ── 3. 결과 요약 (Actions 탭에서 확인용) ──────────────────────────────────
+      # ── 4. Job summary (visible in the Actions tab) ───────────────────────────
       - name: Job summary
         if: always()
         env:
@@ -130,12 +129,12 @@ jobs:
           {
             echo "## Starbucks Stock Check Result"
             echo ""
-            echo "| 항목 | 값 |"
+            echo "| Field | Value |"
             echo "|------|-----|"
-            echo "| 상품 JAN 코드 | \`${JAN_CODE}\` |"
-            echo "| 재고 상태 | **${STOCK_STATUS}** |"
-            echo "| 최종 URL | ${FINAL_URL} |"
-            echo "| 강제 알림 (테스트) | ${FORCE_NOTIFY} |"
-            echo "| 확인 시각 (UTC) | $(date -u '+%Y-%m-%d %H:%M:%S') |"
-            echo "| 확인 시각 (JST) | $(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S') |"
+            echo "| Product JAN Code | \`${JAN_CODE}\` |"
+            echo "| Stock Status | **${STOCK_STATUS}** |"
+            echo "| Page URL | ${FINAL_URL} |"
+            echo "| Force Notify (test) | ${FORCE_NOTIFY} |"
+            echo "| Checked At (UTC) | $(date -u '+%Y-%m-%d %H:%M:%S') |"
+            echo "| Checked At (JST) | $(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S') |"
           } >> "$GITHUB_STEP_SUMMARY"

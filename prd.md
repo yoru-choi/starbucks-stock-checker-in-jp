@@ -1,78 +1,80 @@
 # Starbucks Japan Stock Checker
 
-## 개요
+## Overview
 
-스타벅스 재팬 한정 굿즈의 재고를 자동으로 감지하여, 재입고 시 이메일로 알림을 보내는 GitHub Actions 봇
-
----
-
-## 배경
-
-스타벅스 재팬 한정 컵 등 굿즈는 재입고 시점을 알기 어렵고, 수동으로 계속 확인하기 번거럽다.  
-재입고를 빠르게 포착하여 구매 기회를 놓치지 않는 것이 목적이다.
+A GitHub Actions bot that automatically monitors stock availability of limited Starbucks Japan goods and sends an email notification when an item is back in stock.
 
 ---
 
-## 동작 방식
+## Background
 
-### 재고 감지 원리
+Limited Starbucks Japan items (cups, mugs, etc.) are hard to track for restocks, and manually refreshing the page is tedious. The goal is to catch restocks quickly so purchase opportunities are not missed.
 
-로그인 없이 공개 굿즈 교환 페이지 HTML을 파싱하여 재고 판단
+---
 
-**대상 페이지:** `https://www.starbucks.co.jp/mystarbucks/reward/exchange/original_goods/`
+## How It Works
 
-페이지 내 JAN 코드가 일치하는 버튼의 CSS 클래스로 판단:
+### Stock Detection
 
-| HTML | 의미 |
+No login required. The bot checks the public goods exchange page using a Playwright headless browser (full JS execution) and reads the actual DOM state.
+
+**Target page:** `https://www.starbucks.co.jp/mystarbucks/reward/exchange/original_goods/`
+
+Stock status is determined by the CSS class on the out-of-stock button whose `data-jan` attribute matches the target JAN code:
+
+| CSS classes on outofstock button | Meaning |
 |---|---|
-| `<button class="js-cartform-instock" data-jan="...">` | ✅ 재고 있음 (`hide` 없음) |
-| `<button class="js-cartform-instock hide" data-jan="...">` | ❌ 품절 (`hide` 있음) |
+| `js-cartform-outofstock hide` | ✅ In stock (button is hidden) |
+| `js-cartform-outofstock` | ❌ Out of stock (button is visible) |
 
-로그인 불필요. Playwright 헤드리스 브라우저로 JS 완전 실행 후 DOM 확인
+> Playwright is used because the `hide` class is applied dynamically by JavaScript; plain HTTP requests return pre-render HTML where the class is not yet set.
 
-### 실행 주기
+### Schedule
 
-- **자동:** 4시간마다 cron 실행 (UTC 0, 4, 8, 12, 16, 20시 / KST 9, 13, 17, 21, 1, 5시)
-- **수동:** GitHub Actions UI에서 `Run workflow` 버튼으로 즉시 실행 가능
+| Mode | Trigger |
+|---|---|
+| **Automatic** | Every 4 hours via cron (`0 */4 * * *`) — UTC 0, 4, 8, 12, 16, 20 / JST 9, 13, 17, 21, 1, 5 |
+| **Manual** | `Run workflow` button in the GitHub Actions UI |
 
-### 알림
+### Notifications
 
-- 재고 감지 시 Gmail SMTP를 통해 이메일 발송
-- `force_notify: true` 옵션으로 재고 여부 무관하게 테스트 메일 발송 가능
+- Email is sent via Gmail SMTP when stock is detected.
+- Set `force_notify: true` on a manual run to send a test email regardless of stock status.
 
 ---
 
-## 설정값
+## Configuration
 
 ### GitHub Repository Secrets
 
-| 이름 | 설명 |
+| Name | Description |
 |---|---|
-| `GMAIL_USER` | 발송용 Gmail 주소 |
-| `GMAIL_APP_PASSWORD` | Gmail 앱 비밀번호 (16자리) |
-| `NOTIFY_EMAIL` | 알림 받을 이메일 주소 |
+| `GMAIL_USER` | Gmail address used to send notifications |
+| `GMAIL_APP_PASSWORD` | Gmail App Password (16 characters, no spaces) |
+| `NOTIFY_EMAIL` | Email address to receive notifications |
 
 ### GitHub Repository Variables
 
-| 이름 | 설명 | 기본값 |
+| Name | Description | Default |
 |---|---|---|
-| `JAN_CODE` | 감시할 상품 JAN 코드 | `4524785613492` |
+| `JAN_CODE` | JAN code of the product to monitor | `4524785613492` |
 
 ---
 
-## 감시 상품
+## Monitored Products
 
-| JAN 코드 | 비고 |
+| JAN Code | Notes |
 |---|---|
-| `4524785613492` | 감시 대상 한정 컵 |
-| `4524785531086` | 테스트용 (재고 있는 굿즈) |
+| `4524785613492` | Target limited item (currently monitored) |
+| `4524785531086` | Test item (has stock; useful for verifying detection logic) |
 
 ---
 
-## 파일 구조
+## File Structure
 
 ```
 .github/
   workflows/
-    check-stock.yml   # GitHub Actions 워크플로우
+    check-stock.yml   # GitHub Actions workflow
+prd.md                # This document
 ```
