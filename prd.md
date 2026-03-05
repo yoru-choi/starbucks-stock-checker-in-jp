@@ -28,7 +28,7 @@
 | `<button class="js-cartform-instock" data-jan="...">` | ✅ 재고 있음 (`hide` 없음) |
 | `<button class="js-cartform-instock hide" data-jan="...">` | ❌ 품절 (`hide` 있음) |
 
-로그인 불필요, 외부 라이브러리 불필요 (Python 내장 `urllib`, `re` 사용)
+로그인 불필요. Playwright 헤드리스 브라우저로 JS 완전 실행 후 DOM 확인
 
 ### 실행 주기
 
