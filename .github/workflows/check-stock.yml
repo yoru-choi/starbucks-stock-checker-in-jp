@@ -46,28 +46,43 @@ jobs:
           print(f"  JAN 코드 : {jan_code}")
           print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-          req  = urllib.request.Request(PAGE_URL, headers=HEADERS)
+          req = urllib.request.Request(PAGE_URL, headers=HEADERS)
           with urllib.request.urlopen(req, timeout=30) as res:
             html = res.read().decode("utf-8")
 
-          # data-jan이 일치하는 js-cartform-instock 버튼 추출
-          # 재고 있음:  class="... js-cartform-instock"         (hide 없음)
-          # 재고 없음:  class="... js-cartform-instock hide ..."
-          pattern = re.compile(
-            r'<button[^>]+class="([^"]*js-cartform-instock[^"]*)"[^>]*data-jan="' + re.escape(jan_code) + r'"',
-            re.IGNORECASE,
+          # JAN 코드가 일치하는 <form> 전체를 추출
+          form_pattern = re.compile(
+            r'<form[^>]+data-jan="' + re.escape(jan_code) + r'"[^>]*>(.*?)</form>',
+            re.DOTALL | re.IGNORECASE,
           )
-          match = pattern.search(html)
+          form_match = form_pattern.search(html)
 
-          if not match:
+          if not form_match:
             status = "not_found"
             print(f"  결과 : ⚠️  JAN 코드 {jan_code} 를 페이지에서 찾을 수 없음")
-          elif "hide" in match.group(1).split():
-            status = "out_of_stock"
-            print("  결과 : ❌ 품절 (js-cartform-instock hide)")
           else:
-            status = "in_stock"
-            print("  결과 : ✅ 재고 있음 (js-cartform-instock, hide 없음)")
+            form_html = form_match.group(1)
+            print(f"  form HTML 발견 (길이: {len(form_html)}자)")
+
+            # js-cartform-outofstock 버튼 클래스 추출
+            # hide 없음 → 품절 버튼이 보임 → 품절
+            # hide 있음 → 품절 버튼이 숨겨짐 → 재고 있음
+            outofstock_match = re.search(
+              r'class="([^"]*js-cartform-outofstock[^"]*)"',
+              form_html, re.IGNORECASE,
+            )
+            if outofstock_match:
+              classes = outofstock_match.group(1).split()
+              print(f"  outofstock 버튼 클래스: {classes}")
+              if "hide" in classes:
+                status = "in_stock"
+                print("  결과 : ✅ 재고 있음 (outofstock 버튼 hide 확인)")
+              else:
+                status = "out_of_stock"
+                print("  결과 : ❌ 품절 (outofstock 버튼 표시 중)")
+            else:
+              status = "unknown"
+              print("  결과 : ⚠️  버튼 구조 파싱 실패")
 
           print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
