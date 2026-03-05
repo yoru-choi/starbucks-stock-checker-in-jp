@@ -17,19 +17,18 @@
 
 ### 재고 감지 원리
 
-스타벅스 재팬 계정으로 로그인 후 최종 도달 URL로 재고 판단
+로그인 없이 공개 굿즈 교환 페이지 HTML을 파싱하여 재고 판단
 
-**전체 플로우:**
-1. `api/star-login?jan_code=...` 요청 → 로그인 페이지로 리다이렉트
-2. 로그인 페이지에서 세션 쿠키 + CSRF 토큰 추출
-3. 계정 이메일/패스워드 + CSRF 토큰 POST 로그인
-4. OAuth 콜백 거쳐 최종 URL로 재고 판단
+**대상 페이지:** `https://www.starbucks.co.jp/mystarbucks/reward/exchange/original_goods/`
 
-| 최종 도달 URL | 의미 |
+페이지 내 JAN 코드가 일치하는 버튼의 CSS 클래스로 판단:
+
+| HTML | 의미 |
 |---|---|
-| `star_cart?error_code=110` | ❌ 품절 |
-| `star_cart` (error 없음) | ✅ 재고 있음 |
-| `login` 페이지 | ⚠️ 로그인 실패 (자격증명 오류) |
+| `<button class="js-cartform-instock" data-jan="...">` | ✅ 재고 있음 (`hide` 없음) |
+| `<button class="js-cartform-instock hide" data-jan="...">` | ❌ 품절 (`hide` 있음) |
+
+로그인 불필요, 외부 라이브러리 불필요 (Python 내장 `urllib`, `re` 사용)
 
 ### 실행 주기
 
@@ -52,8 +51,6 @@
 | `GMAIL_USER` | 발송용 Gmail 주소 |
 | `GMAIL_APP_PASSWORD` | Gmail 앱 비밀번호 (16자리) |
 | `NOTIFY_EMAIL` | 알림 받을 이메일 주소 |
-| `SBUX_EMAIL` | 스타벅스 재팬 계정 이메일 |
-| `SBUX_PASSWORD` | 스타벅스 재팬 계정 패스워드 |
 
 ### GitHub Repository Variables
 
