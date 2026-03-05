@@ -1,0 +1,133 @@
+name: Starbucks Stock Checker
+
+on:
+  schedule:
+    # 4시간마다 실행 (UTC 기준: 0, 4, 8, 12, 16, 20시)
+    # 한국 기준: 9, 13, 17, 21, 01, 05시
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      jan_code:
+        description: "상품 JAN 코드 (기본값 사용 시 비워두세요)"
+        required: false
+        default: ""
+      force_notify:
+        description: "이메일 테스트용 강제 알림 (true 입력 시 재고 여부 무관하게 이메일 발송)"
+        required: false
+        default: "true"
+
+jobs:
+  check-stock:
+    name: Check Starbucks Japan Stock
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. 재고 확인 ─────────────────────────────────────────────────────────
+      - name: Check stock via redirect chain
+        id: stock
+        env:
+          JAN_CODE: ${{ inputs.jan_code || vars.JAN_CODE || '4524785613492' }}
+        run: |
+          TARGET_URL="https://cart.starbucks.co.jp/api/star-login?jan_code=${JAN_CODE}"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Starbucks Stock Checker"
+          echo "  $(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S JST')"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  JAN 코드 : ${JAN_CODE}"
+          echo "  요청 URL : ${TARGET_URL}"
+          echo ""
+
+          # curl로 리다이렉트를 모두 따라가서 최종 URL 및 HTTP 상태코드 확인
+          # -L  : 리다이렉트 자동 추적
+          # -s  : 진행상황 숨김
+          # -o /dev/null : 응답 바디 무시
+          # -w  : writeout 형식으로 최종 URL 출력
+          HTTP_INFO=$(curl \
+            --location \
+            --silent \
+            --max-redirs 20 \
+            --connect-timeout 15 \
+            --max-time 30 \
+            --write-out "%{url_effective}\n%{http_code}" \
+            --output /dev/null \
+            --header "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" \
+            --header "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            --header "Accept-Language: ja-JP,ja;q=0.9" \
+            --cookie-jar /tmp/starbucks-cookies.txt \
+            "${TARGET_URL}" \
+          )
+
+          FINAL_URL=$(echo "$HTTP_INFO" | head -1)
+          HTTP_STATUS=$(echo "$HTTP_INFO" | tail -1)
+
+          echo "  최종 도달 URL    : ${FINAL_URL}"
+          echo "  최종 HTTP 상태   : ${HTTP_STATUS}"
+
+          # error_code=110 이 최종 URL에 포함되어 있으면 품절
+          if echo "${FINAL_URL}" | grep --quiet "error_code=110"; then
+            echo ""
+            echo "  결과 : ❌ 품절 (error_code=110 감지됨)"
+            echo "stock_status=out_of_stock" >> "$GITHUB_OUTPUT"
+            echo "final_url=${FINAL_URL}"    >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "  결과 : ✅ 재고 있음 (error_code=110 미감지)"
+            echo "stock_status=in_stock"  >> "$GITHUB_OUTPUT"
+            echo "final_url=${FINAL_URL}" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # ── 2. 재고 있을 때만 이메일 발송 ────────────────────────────────────────
+      - name: Send email notification
+        if: steps.stock.outputs.stock_status == 'in_stock' || inputs.force_notify == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USER }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          from: "Starbucks Stock Bot <${{ secrets.GMAIL_USER }}>"
+          subject: "${{ inputs.force_notify == 'true' && '🧪 [테스트 메일] 스타벅스 재고 알림 테스트' || '🎉 [재입고 알림] 스타벅스 JPN 한정 컵 구매 가능!' }}"
+          body: |
+            ${{ inputs.force_notify == 'true' && '⚠️ 이 메일은 테스트 발송입니다. 실제 재고와 무관합니다.' || '안녕하세요!' }}
+
+            스타벅스 재팬 한정 컵 상품이 재입고되었을 가능성이 감지되었습니다.
+
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+              상품 JAN 코드 : ${{ vars.JAN_CODE || '4524785613492' }}
+              감지 시각      : ${{ github.event.repository.updated_at }}
+              최종 도달 URL  : ${{ steps.stock.outputs.final_url }}
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+            지금 바로 확인해 보세요:
+            https://cart.starbucks.co.jp/api/star-login?jan_code=${{ vars.JAN_CODE || '4524785613492' }}
+
+            ─────────────────────────────────
+            이 메일은 GitHub Actions Bot이 자동 발송했습니다.
+            (4시간마다 재고를 자동 확인합니다)
+
+      # ── 3. 결과 요약 (Actions 탭에서 확인용) ──────────────────────────────────
+      - name: Job summary
+        if: always()
+        env:
+          JAN_CODE: ${{ inputs.jan_code || vars.JAN_CODE || '4524785613492' }}
+          STOCK_STATUS: ${{ steps.stock.outputs.stock_status }}
+          FINAL_URL: ${{ steps.stock.outputs.final_url }}
+          FORCE_NOTIFY: ${{ inputs.force_notify || 'false' }}
+        run: |
+          {
+            echo "## Starbucks Stock Check Result"
+            echo ""
+            echo "| 항목 | 값 |"
+            echo "|------|-----|"
+            echo "| 상품 JAN 코드 | \`${JAN_CODE}\` |"
+            echo "| 재고 상태 | **${STOCK_STATUS}** |"
+            echo "| 최종 URL | ${FINAL_URL} |"
+            echo "| 강제 알림 (테스트) | ${FORCE_NOTIFY} |"
+            echo "| 확인 시각 (UTC) | $(date -u '+%Y-%m-%d %H:%M:%S') |"
+            echo "| 확인 시각 (JST) | $(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S') |"
+          } >> "$GITHUB_STEP_SUMMARY"
