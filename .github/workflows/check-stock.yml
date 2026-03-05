@@ -95,7 +95,7 @@ jobs:
 
           # STEP 3: 로그인 POST
           print("\n  [2/3] 로그인 POST 중...")
-          payload = {**parser.fields, "email": email, "password": password}
+          payload = {**parser.fields, "username": email, "password": password}
           r2 = session.post(
             action,
             data=payload,
