@@ -22,62 +22,123 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. 재고 확인 ─────────────────────────────────────────────────────────
-      - name: Check stock via redirect chain
+      # ── 1. 재고 확인 (로그인 후 재고 확인) ──────────────────────────────────
+      - name: Check stock via login flow
         id: stock
         env:
           JAN_CODE: ${{ inputs.jan_code || vars.JAN_CODE || '4524785613492' }}
+          SBUX_EMAIL: ${{ secrets.SBUX_EMAIL }}
+          SBUX_PASSWORD: ${{ secrets.SBUX_PASSWORD }}
         run: |
-          TARGET_URL="https://cart.starbucks.co.jp/api/star-login?jan_code=${JAN_CODE}"
+          COOKIE_JAR="/tmp/sbux-cookies.txt"
+          LOGIN_HTML="/tmp/sbux-login.html"
+          CALLBACK_HTML="/tmp/sbux-callback.html"
+          ENTRY_URL="https://cart.starbucks.co.jp/api/star-login?jan_code=${JAN_CODE}"
+
+          CURL_OPTS=(
+            --silent
+            --location
+            --max-redirs 20
+            --connect-timeout 15
+            --max-time 30
+            --cookie "${COOKIE_JAR}"
+            --cookie-jar "${COOKIE_JAR}"
+            --header "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            --header "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            --header "Accept-Language: ja-JP,ja;q=0.9"
+          )
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Starbucks Stock Checker"
           echo "  $(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S JST')"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  JAN 코드 : ${JAN_CODE}"
-          echo "  요청 URL : ${TARGET_URL}"
           echo ""
 
-          # curl로 리다이렉트를 모두 따라가서 최종 URL 및 HTTP 상태코드 확인
-          # -L  : 리다이렉트 자동 추적
-          # -s  : 진행상황 숨김
-          # -o /dev/null : 응답 바디 무시
-          # -w  : writeout 형식으로 최종 URL 출력
-          HTTP_INFO=$(curl \
-            --location \
-            --silent \
-            --max-redirs 20 \
-            --connect-timeout 15 \
-            --max-time 30 \
+          # ── STEP 1: 진입 URL → 로그인 페이지까지 리다이렉트 추적 ──────────
+          echo "  [1/4] 로그인 페이지 로드 중..."
+          LOGIN_URL_INFO=$(curl "${CURL_OPTS[@]}" \
+            --write-out "%{url_effective}" \
+            --output "${LOGIN_HTML}" \
+            "${ENTRY_URL}"
+          )
+          echo "  로그인 페이지 URL: ${LOGIN_URL_INFO}"
+
+          # ── STEP 2: form action URL 및 hidden field 추출 ─────────────────
+          # form action (로그인 POST 엔드포인트)
+          FORM_ACTION=$(grep -oP '(?<=action=")[^"]+' "${LOGIN_HTML}" | head -1)
+          if [ -z "${FORM_ACTION}" ]; then
+            # 싱글쿼트 fallback
+            FORM_ACTION=$(grep -oP "(?<=action=')[^']+" "${LOGIN_HTML}" | head -1)
+          fi
+          echo "  form action: ${FORM_ACTION}"
+
+          # _csrf 토큰 추출 (name="_csrf" or name="csrf_token" 등)
+          CSRF=$(grep -oP '(?<=name="_csrf" value=")[^"]+' "${LOGIN_HTML}" | head -1)
+          if [ -z "${CSRF}" ]; then
+            CSRF=$(grep -oP '(?<=name="csrf" value=")[^"]+' "${LOGIN_HTML}" | head -1)
+          fi
+          if [ -z "${CSRF}" ]; then
+            CSRF=$(grep -oP '(?<=name="_token" value=")[^"]+' "${LOGIN_HTML}" | head -1)
+          fi
+          echo "  CSRF 토큰: ${CSRF:-없음}"
+
+          # state, nonce 추출 (OAuth 파라미터)
+          STATE=$(grep -oP '(?<=name="state" value=")[^"]+' "${LOGIN_HTML}" | head -1)
+          NONCE=$(grep -oP '(?<=name="nonce" value=")[^"]+' "${LOGIN_HTML}" | head -1)
+          echo "  state: ${STATE:-없음}, nonce: ${NONCE:-없음}"
+
+          # form action이 상대경로면 절대경로로 변환
+          if echo "${FORM_ACTION}" | grep -q "^/"; then
+            FORM_ACTION="https://login.starbucks.co.jp${FORM_ACTION}"
+          fi
+
+          # ── STEP 3: 로그인 POST ───────────────────────────────────────────
+          echo ""
+          echo "  [2/4] 로그인 POST 중..."
+
+          POST_DATA="email=${SBUX_EMAIL}&password=${SBUX_PASSWORD}"
+          [ -n "${CSRF}" ]  && POST_DATA="${POST_DATA}&_csrf=${CSRF}"
+          [ -n "${STATE}" ] && POST_DATA="${POST_DATA}&state=${STATE}"
+          [ -n "${NONCE}" ] && POST_DATA="${POST_DATA}&nonce=${NONCE}"
+
+          LOGIN_RESULT=$(curl "${CURL_OPTS[@]}" \
             --write-out "%{url_effective}\n%{http_code}" \
-            --output /dev/null \
-            --header "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" \
-            --header "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-            --header "Accept-Language: ja-JP,ja;q=0.9" \
-            --cookie-jar /tmp/starbucks-cookies.txt \
-            "${TARGET_URL}" \
+            --output "${CALLBACK_HTML}" \
+            --request POST \
+            --data-urlencode "email=${SBUX_EMAIL}" \
+            --data-urlencode "password=${SBUX_PASSWORD}" \
+            $([ -n "${CSRF}" ]  && echo "--data-urlencode _csrf=${CSRF}") \
+            $([ -n "${STATE}" ] && echo "--data-urlencode state=${STATE}") \
+            $([ -n "${NONCE}" ] && echo "--data-urlencode nonce=${NONCE}") \
+            --header "Referer: ${LOGIN_URL_INFO}" \
+            --header "Content-Type: application/x-www-form-urlencoded" \
+            "${FORM_ACTION:-https://login.starbucks.co.jp/login}"
           )
 
-          FINAL_URL=$(echo "$HTTP_INFO" | head -1)
-          HTTP_STATUS=$(echo "$HTTP_INFO" | tail -1)
+          FINAL_URL=$(echo "${LOGIN_RESULT}" | head -1)
+          HTTP_STATUS=$(echo "${LOGIN_RESULT}" | tail -1)
 
-          echo "  최종 도달 URL    : ${FINAL_URL}"
-          echo "  최종 HTTP 상태   : ${HTTP_STATUS}"
+          echo "  최종 도달 URL  : ${FINAL_URL}"
+          echo "  최종 HTTP 상태 : ${HTTP_STATUS}"
 
-          # 동작 원리:
-          #   - 품절: star_cart?error_code=110 으로 직접 리다이렉트 (로그인 불필요)
-          #   - 재고 있음: login.starbucks.co.jp/login 에서 멈춤 (로그인 필요 = 재고 있다는 의미)
+          # ── STEP 4: 재고 판단 ─────────────────────────────────────────────
+          echo ""
+          echo "  [3/4] 재고 판단 중..."
           if echo "${FINAL_URL}" | grep --quiet "error_code=110"; then
-            echo ""
             echo "  결과 : ❌ 품절 (error_code=110 감지됨)"
             echo "stock_status=out_of_stock" >> "$GITHUB_OUTPUT"
-            echo "final_url=${FINAL_URL}"    >> "$GITHUB_OUTPUT"
+          elif echo "${FINAL_URL}" | grep --quiet "star_cart"; then
+            echo "  결과 : ✅ 재고 있음 (star_cart 도달 확인)"
+            echo "stock_status=in_stock"     >> "$GITHUB_OUTPUT"
+          elif echo "${FINAL_URL}" | grep --quiet "login"; then
+            echo "  결과 : ⚠️  로그인 실패 (자격증명 오류 또는 세션 문제)"
+            echo "stock_status=login_failed" >> "$GITHUB_OUTPUT"
           else
-            echo ""
-            echo "  결과 : ✅ 재고 있음 (error_code=110 미감지 → 로그인 페이지로 유도됨)"
-            echo "stock_status=in_stock"  >> "$GITHUB_OUTPUT"
-            echo "final_url=${FINAL_URL}" >> "$GITHUB_OUTPUT"
+            echo "  결과 : ⚠️  알 수 없는 상태 (URL 확인 필요)"
+            echo "stock_status=unknown"      >> "$GITHUB_OUTPUT"
           fi
+          echo "final_url=${FINAL_URL}" >> "$GITHUB_OUTPUT"
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
